@@ -1,3 +1,3 @@
-# ARISE Kaggle$BIt(B
+# ARISE Kaggle部
 
-ARISE Kaggle$BIt$G$9!%(B
+ARISE Kaggle部です．
