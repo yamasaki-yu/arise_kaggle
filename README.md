@@ -1,3 +1,3 @@
 # ARISE Kaggle部
 
-ARISE Kaggle部です．
+ARISE Kaggle部でーす．
