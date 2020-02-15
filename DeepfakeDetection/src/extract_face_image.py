@@ -2,6 +2,9 @@ import os
 import os.path as osp
 import json
 import argparse
+import zipfile
+from zipfile import ZipFile
+import shutil
 from glob import glob
 from tqdm import tqdm
 import cv2 as cv
@@ -131,6 +134,7 @@ if __name__ == '__main__':
         
         # extract faces
         face_count = 0
+        arc_files = []
         for frame_idx, frame in tqdm(read_frames(movie), desc='{}:{}'.format(movie_name, info['label']), total=int(info['num_frames'])):
             faces = extract_faces(frame)
             face_count += len(faces)
@@ -138,8 +142,19 @@ if __name__ == '__main__':
             for idx, face in enumerate(faces):
                 out_file = 'FRAME-{}__FACE-{}.png'.format(frame_idx, idx+1)
                 out_path = osp.join(args.out_dir, movie_name, out_file)
+                arc_files.append({'path': out_path, 'arcname': osp.join(movie_name, out_file)})
                 cv.imwrite(out_path, face)
         
         info['extracted_faces'] = face_count
-        json.dump(info, open(osp.join(args.out_dir, movie_name, 'info.json'), 'w', encoding='utf-8'), indent=2, ensure_ascii=False)
+        info_path = osp.join(args.out_dir, movie_name, 'info.json')
+        json.dump(info, open(info_path, 'w', encoding='utf-8'), indent=2, ensure_ascii=False)
+
+        # zip the extracted faces
+        with ZipFile(osp.join(args.out_dir, movie_name + '.zip'), 'w', zipfile.ZIP_DEFLATED) as z:
+            for af in arc_files:
+                z.write(af['path'], arcname=af['arcname'])
+            z.write(info_path, arcname=osp.join(movie_name, 'info.json'))
+
+        # delete original directory
+        shutil.rmtree(osp.join(args.out_dir, movie_name))
 
