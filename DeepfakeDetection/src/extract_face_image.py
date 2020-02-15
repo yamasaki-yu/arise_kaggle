@@ -71,11 +71,20 @@ def extract_faces(image):
         face image with shape of (height, width, channel)
     '''
     res = []
+    prevs = []
     detected = farec.face_locations(image)
-    for det in detected:
-        ymin, xmax, ymax, xmin = det
-        face = image[ymin:ymax, xmin:xmax]
-        res.append(face)
+
+    if len(detected) == 0:
+        for prev in prevs:
+            ymin, xmax, ymax, xmin = prev['det']
+            face = image[ymin:ymax, xmin:xmax]
+            res.append(face)
+    else:
+        for det in detected:
+            ymin, xmax, ymax, xmin = det
+            face = image[ymin:ymax, xmin:xmax]
+            res.append(face)
+            prevs.append({'det': det, 'face': face})
         
     return res
 
@@ -84,9 +93,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser('extract face images from a movie')
     parser.add_argument('-m', '--movie', help='path to movie file or directory')
     parser.add_argument('-o', '--out-dir', help='path to output directory')
+    parser.add_argument('-g', '--ground-truth', help='path to ground truth json')
     
     args = parser.parse_args()
     
+    # 1. check arguments
+    #====================================================================
     # check output directory is not a file
     assert osp.isfile(args.out_dir) == False
     
@@ -96,9 +108,17 @@ if __name__ == '__main__':
     if osp.isfile(args.movie):
         movies = [args.movie]
     else:
-        movies = list(glob(osp.join(osp.abspath(args.movie), '**', '*'), recursive=True))
+        movies = sorted(list(glob(osp.join(osp.abspath(args.movie), '**', '*'), recursive=True)))
     
+    # check the ground truth file exists
+    assert osp.isfile(args.ground_truth) == True
     
+
+    # 2. read ground truth
+    #====================================================================
+    gt = json.load(open(args.ground_truth, 'r'))
+
+    # 3. extract faces
     for movie in tqdm(movies, desc='ITER FRAMES'):
         
         # create output directory
@@ -107,14 +127,19 @@ if __name__ == '__main__':
         
         # get meta information of the movie
         info = movie_info(movie)
-        json.dump(info, open(osp.join(args.out_dir, movie_name, 'info.json'), 'w', encoding='utf-8'), indent=2, ensure_ascii=False)
+        info['label'] = gt[osp.basename(movie)]['label']
         
         # extract faces
-        for frame_idx, frame in tqdm(read_frames(movie), desc=movie_name, total=int(info['num_frames'])):
+        face_count = 0
+        for frame_idx, frame in tqdm(read_frames(movie), desc='{}:{}'.format(movie_name, info['label']), total=int(info['num_frames'])):
             faces = extract_faces(frame)
+            face_count += len(faces)
 
             for idx, face in enumerate(faces):
                 out_file = 'FRAME-{}__FACE-{}.png'.format(frame_idx, idx+1)
                 out_path = osp.join(args.out_dir, movie_name, out_file)
                 cv.imwrite(out_path, face)
         
+        info['extracted_faces'] = face_count
+        json.dump(info, open(osp.join(args.out_dir, movie_name, 'info.json'), 'w', encoding='utf-8'), indent=2, ensure_ascii=False)
+
