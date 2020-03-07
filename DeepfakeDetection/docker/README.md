@@ -3,6 +3,7 @@
 ## 操作の流れ
 
 1. [GCEのVMインスタンスの立ち上げ](#GCEのVMインスタンス立ち上げ)
+1. [ファイアウォールの設定](#ファイアウォールの設定)
 1. [GCE内の処理](#GCE内の処理)
 
     1. [GCSとマウント](#GCSとマウント)
@@ -11,59 +12,56 @@
     1. [containerの起動](#containerの起動)
 
 1. [コンテナ内の処理](#コンテナ内の処理)
+
+    1. [GPUの有効化](#GPUの有効化)
+    1. [jupyterの起動](#jupyterの起動)
 1. [500Gデータのダウンロード](#データのダウンロード)
 
 ## GCEのVMインスタンス立ち上げ
 
-* リージョン
+https://console.cloud.google.com/compute/instancesAdd
 
-    us-central,east,westが安い
+||||
+|---|---|---|
+|リージョン||us-****|
+|マシン構成|マシンタイプ|n1-standard-[8-96]|
+|GPUのタイプ||任意|
+|GPUの数||任意|
+|ブートディスク|オペレーティングシステム|Deep Learning on Linux|
+||バージョン|任意|
+||サイズ|60以上※1|
+|IDとAPIへのアクセス|アクセススコープ|各APIにアクセス権を設定(ストレージを「フル」に変更)※2|
+|ファイアウォール||HTTP,HTTPSトラフィックを許可する|
 
-* マシンの構成
+※1 後からでも追加可能らしい
 
-    * マシンタイプ
+※2 後からでも設定可能
 
-        60GBあった方がよい(30GBでも動くは動く)
-    
-* CPUプラットフォーム
+## ファイアウォールの設定
 
-    自動でよい
-    
-* GPU(追加)
+https://console.cloud.google.com/networking/firewalls/add
 
-    * GPUのタイプ
+デフォルトでは、80と443ポートしか公開されていないので、jupyterの8888ポートを公開する
 
-        TeslaK80じゃないと高い
-    
-    * GPUの数
+||||
+|---|---|---|
+|名前||任意|
+|ターゲット||任意※1|
+|ターゲットタグ||任意※2|
+|サービスアカウント||このプロジェクト内※2|
+|プロトコルとポート|tcp(チェック)|8888(jupyterの場合)|
 
-        2個は欲しい
-    
-* ブートディスク
+※1 セキュリティ的には指定されたターゲットタグもしくはサービスアカウントにした方がよい
 
-    * OS
-
-        OSはなんでもよい(Deep Learning on Linuxがおすすめらしい)
-
-    * サイズ
-
-        100GBは欲しい
-
-* IDとAPIへのアクセス
-
-    各APIにアクセス権を設定
-
-    * ストレージ
-
-        フル(これじゃないとGCSに書き込めない)
-
-* ファイアウォール
-
-    HTTP,HTTPSを許可
+※2 「ターゲット」の設定次第。ターゲットがタグしていならば、記載したタグ名をインスタンスの設定にあとでタグを追加。
 
 ## GCE内の処理
 
 ### GCSとマウント
+
+※前もってストレージを作成しておく必要がある。
+
+https://console.cloud.google.com/storage/browser
 
 * gcsfuseのインストール
 ```bash
@@ -82,6 +80,10 @@ gcsfuse ${BACKET_NAME} ${LOCAL_DIR} #BACKET_NAMEはGCSのバケット名
 
 ### GitHubとの連携
 
+※前もってgithubのアカウントを作成しておく必要がある
+
+https://github.com/
+
 * 公開鍵の生成
 
 ```bash
@@ -94,7 +96,7 @@ ssh-keygen -t rsa
 ```bash
 cat ./.ssh/id_rsa.pub
 
-# 出力結果をGITHUBに貼り付け
+# 出力結果を自分のGITHUBアカウントの「右上のボタン→Settings→SSH and GPG keys→New SSH key」のKeyに貼り付け
 ```
 
 ### kaggle用のimageを取得
@@ -104,6 +106,22 @@ cat ./.ssh/id_rsa.pub
 git clone git@github.com:Kaggle/docker-python.git
 cd docker-python
 
+# Dockerfileの修正
+vi gpu.Dockerfile
+```
+```Docker
+# ポートの公開
+EXPOSE 8888
+
+# CUDAのversion変更
+# 1→0
+ENV CUDA_MINOR_VERSION=0
+# 243→130
+ENV CUDA_PATCH_VERSION=130
+```
+
+
+```bash
 # --gpuオプションでビルド
 ./build --gpu
 
@@ -113,11 +131,30 @@ docker images
 
 ### containerの起動
 ```bash
-docker run -itd --name [CONTAINER_NAME] -p 8888:8888 -v ${PATH_TO_DIR}:${WORK_DIR} kaggle/python-gpu-build # PATH_TO_DIRはマウント元、WORKDIRはマウント先
+docker run --runtime nvidia -itd --name [CONTAINER_NAME] -p 8888:8888 kaggle/python-gpu-build # PATH_TO_DIRはマウント元、WORKDIRはマウント先
 docker exec -it [CONTAINER_NAME] /bin/bash
 ```
 
 ## コンテナ内の処理
+
+### GPUの有効化
+
+https://github.com/Kaggle/docker-python/issues/361#issuecomment-448093930
+
+```bash
+#環境変数の変更
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64
+
+# python内で確認
+python
+```
+
+```python
+import torch
+torch.cuda.is_available()
+
+>>>TRUE
+```
 
 ### jupyterの起動
 
@@ -196,6 +233,9 @@ sh data_load.sh
 * dlib・cmake等は手動でインストールする必要があります。
 
 * コンテナから直接GCSのデータを触れないので、GCEでデータの移動(cpコマンド)が必要です。
+
+* こっちの方がスマート(多分高いけど)
+https://www.kubeflow.org/docs/gke/
 
 * etc...
 
